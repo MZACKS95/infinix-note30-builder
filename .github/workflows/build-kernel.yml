@@ -1,81 +1,31 @@
 name: Build Kernel Infinix Note 30 (android12-5.10-2024-05_r1)
 
 on:
-  workflow_dispatch: # Mengaktifkan tombol manual "Run workflow" di GitHub Actions
+  workflow_dispatch:
 
 jobs:
-  build-gki:
+  build-kernel:
     runs-on: ubuntu-latest
     steps:
-      - name: Maximize Server Build Space
+      - name: Jalankan Kompilasi via Dabao Action
         uses: dabao1955/kernel_build_action@main
         with:
-          root-reserve-mb: 8192
-          temp-reserve-mb: 4096
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-
-      - name: Install Builder Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bc bison build-essential ccache flex libelf-dev libssl-dev git zip unzip python3 lz4 libio-pty-perl
-
-      - name: Download Official AOSP Clang r487747c
-        run: |
-          mkdir -p $GITHUB_WORKSPACE/clang
-          cd $GITHUB_WORKSPACE/clang
-          wget -q https://googlesource.com
-          tar -xf clang-r487747c.tar.gz
-          rm clang-r487747c.tar.gz
-
-      - name: Clone Google GKI Source Code
-        run: |
-          git clone --depth=1 https://googlesource.com -b refs/tags/android12-5.10-2024-05_r1 $GITHUB_WORKSPACE/kernel
-
-      - name: Inject Wi-Fi Drivers into Config
-        run: |
-          cd $GITHUB_WORKSPACE/kernel
-          CONFIG_FILE="arch/arm64/configs/gki_defconfig"
-          
-          echo "" >> $CONFIG_FILE
-          echo "# External Wi-Fi Drivers Configuration" >> $CONFIG_FILE
-          echo "CONFIG_NET_CORE=y" >> $CONFIG_FILE
-          echo "CONFIG_WLAN=y" >> $CONFIG_FILE
-          
-          # Driver MediaTek MT7601U (Menjadi Modul .ko)
-          echo "CONFIG_MT76_CORE=m" >> $CONFIG_FILE
-          echo "CONFIG_MT76_USB=m" >> $CONFIG_FILE
-          echo "CONFIG_MT7601U=m" >> $CONFIG_FILE
-          
-          # Driver Atheros (ath9k USB & ath10k USB Menjadi Modul .ko)
-          echo "CONFIG_ATH_COMMON=m" >> $CONFIG_FILE
-          echo "CONFIG_ATH_CARDS=m" >> $CONFIG_FILE
-          echo "CONFIG_ATH9K_HW=m" >> $CONFIG_FILE
-          echo "CONFIG_ATH9K_COMMON=m" >> $CONFIG_FILE
-          echo "CONFIG_ATH9K_HTC=m" >> $CONFIG_FILE
-          echo "CONFIG_ATH10K=m" >> $CONFIG_FILE
-          echo "CONFIG_ATH10K_USB=m" >> $CONFIG_FILE
-
-      - name: Execute GNU Make Builder
-        run: |
-          cd $GITHUB_WORKSPACE/kernel
-          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
-          
-          make ARCH=arm64 O=out gki_defconfig
-          make ARCH=arm64 O=out -j$(nproc --all) LLVM=1 LLVM_IAS=1
-
-      - name: Collect and Package .ko Files
-        run: |
-          mkdir -p $GITHUB_WORKSPACE/output_modules
-          find $GITHUB_WORKSPACE/kernel/out/ -name "*.ko" -exec cp {} $GITHUB_WORKSPACE/output_modules/ \;
-
-      - name: Upload Output Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: Infinix-Note30-Kernel-and-Modules
-          path: |
-            kernel/out/arch/arm64/boot/Image
-            kernel/out/arch/arm64/boot/Image.lz4
-            kernel/out/arch/arm64/boot/Image.gz
-            output_modules/
+          kernel-url: https://googlesource.com
+          kernel-branch: refs/tags/android12-5.10-2024-05_r1
+          config: gki_defconfig
+          arch: arm64
+          aosp-clang: true
+          aosp-clang-version: r487747c
+          extra-cmd: |
+            echo "CONFIG_NET_CORE=y" >> arch/arm64/configs/gki_defconfig
+            echo "CONFIG_WLAN=y" >> arch/arm64/configs/gki_defconfig
+            echo "CONFIG_MT76_CORE=m" >> arch/arm64/configs/gki_defconfig
+            echo "CONFIG_MT76_USB=m" >> arch/arm64/configs/gki_defconfig
+            echo "CONFIG_MT7601U=m" >> arch/arm64/configs/gki_defconfig
+            echo "CONFIG_ATH_COMMON=m" >> arch/arm64/configs/gki_defconfig
+            echo "CONFIG_ATH_CARDS=m" >> arch/arm64/configs/gki_defconfig
+            echo "CONFIG_ATH9K_HW=m" >> arch/arm64/configs/gki_defconfig
+            echo "CONFIG_ATH9K_COMMON=m" >> arch/arm64/configs/gki_defconfig
+            echo "CONFIG_ATH9K_HTC=m" >> arch/arm64/configs/gki_defconfig
+            echo "CONFIG_ATH10K=m" >> arch/arm64/configs/gki_defconfig
+            echo "CONFIG_ATH10K_USB=m" >> arch/arm64/configs/gki_defconfig
