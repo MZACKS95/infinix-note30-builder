@@ -36,7 +36,10 @@ jobs:
           cd $GITHUB_WORKSPACE/kernel
           export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
           
-          # 1. Membuat file konfigurasi tambahan khusus untuk wifi luar (ekstensi .config)
+          # 1. Membuat folder output secara fisik agar tidak memicu Exit Code 2
+          mkdir -p out
+          
+          # 2. Membuat file konfigurasi tambahan khusus untuk wifi luar (ekstensi .config)
           echo "CONFIG_NET_CORE=y" > wifi_ext.config
           echo "CONFIG_WLAN=y" >> wifi_ext.config
           echo "CONFIG_MT76_CORE=m" >> wifi_ext.config
@@ -50,26 +53,30 @@ jobs:
           echo "CONFIG_ATH10K=m" >> wifi_ext.config
           echo "CONFIG_ATH10K_USB=m" >> wifi_ext.config
           
-          # 2. Menggabungkan gki_defconfig bawaan Google dengan konfigurasi wifi baru kita secara aman
+          # 3. Menggabungkan gki_defconfig dengan konfigurasi wifi baru kita secara aman
           ARCH=arm64 scripts/kconfig/merge_config.sh -m arch/arm64/configs/gki_defconfig wifi_ext.config
           
-          # 3. Memperbarui dependensi konfigurasi otomatis agar tidak memicu Exit Code 2
-          make ARCH=arm64 O=out olddefconfig
+          # 4. Membaca konfigurasi dasar ke dalam sistem
+          make ARCH=arm64 gki_defconfig
           
-          # 4. Mulai proses memasak kernel + modul .ko
-          make ARCH=arm64 O=out -j$(nproc --all) LLVM=1 LLVM_IAS=1
+          # 5. Memperbarui dependensi otomatis
+          make ARCH=arm64 olddefconfig
+          
+          # 6. Mulai proses kompilasi Kernel + modul .ko langsung tanpa subfolder terpisah untuk kestabilan
+          make ARCH=arm64 -j$(nproc --all) LLVM=1 LLVM_IAS=1
 
       - name: Collect and Package .ko Files
         run: |
           mkdir -p $GITHUB_WORKSPACE/output_modules
-          find $GITHUB_WORKSPACE/kernel/out/ -name "*.ko" -exec cp {} $GITHUB_WORKSPACE/output_modules/ \;
+          # Menyisir seluruh folder kernel untuk mencari berkas .ko hasil compile
+          find $GITHUB_WORKSPACE/kernel/ -name "*.ko" -exec cp {} $GITHUB_WORKSPACE/output_modules/ \;
 
       - name: Upload Output Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Infinix-Note30-Kernel-and-Modules
           path: |
-            kernel/out/arch/arm64/boot/Image
-            kernel/out/arch/arm64/boot/Image.lz4
-            kernel/out/arch/arm64/boot/Image.gz
+            kernel/arch/arm64/boot/Image
+            kernel/arch/arm64/boot/Image.lz4
+            kernel/arch/arm64/boot/Image.gz
             output_modules/
