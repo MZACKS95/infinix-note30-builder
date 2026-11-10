@@ -31,36 +31,32 @@ jobs:
         run: |
           git clone --depth=1 https://googlesource.com -b refs/tags/android12-5.10-2024-05_r1 $GITHUB_WORKSPACE/kernel
 
-      - name: Inject Wi-Fi Drivers into Config
-        run: |
-          cd $GITHUB_WORKSPACE/kernel
-          CONFIG_FILE="arch/arm64/configs/gki_defconfig"
-          
-          echo "" >> $CONFIG_FILE
-          echo "# External Wi-Fi Drivers Configuration" >> $CONFIG_FILE
-          echo "CONFIG_NET_CORE=y" >> $CONFIG_FILE
-          echo "CONFIG_WLAN=y" >> $CONFIG_FILE
-          
-          # Driver MediaTek MT7601U (Menjadi Modul .ko)
-          echo "CONFIG_MT76_CORE=m" >> $CONFIG_FILE
-          echo "CONFIG_MT76_USB=m" >> $CONFIG_FILE
-          echo "CONFIG_MT7601U=m" >> $CONFIG_FILE
-          
-          # Driver Atheros (ath9k USB & ath10k USB Menjadi Modul .ko)
-          echo "CONFIG_ATH_COMMON=m" >> $CONFIG_FILE
-          echo "CONFIG_ATH_CARDS=m" >> $CONFIG_FILE
-          echo "CONFIG_ATH9K_HW=m" >> $CONFIG_FILE
-          echo "CONFIG_ATH9K_COMMON=m" >> $CONFIG_FILE
-          echo "CONFIG_ATH9K_HTC=m" >> $CONFIG_FILE
-          echo "CONFIG_ATH10K=m" >> $CONFIG_FILE
-          echo "CONFIG_ATH10K_USB=m" >> $CONFIG_FILE
-
       - name: Execute GNU Make Builder
         run: |
           cd $GITHUB_WORKSPACE/kernel
           export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
           
-          make ARCH=arm64 O=out gki_defconfig
+          # 1. Membuat file konfigurasi tambahan khusus untuk wifi luar (ekstensi .config)
+          echo "CONFIG_NET_CORE=y" > wifi_ext.config
+          echo "CONFIG_WLAN=y" >> wifi_ext.config
+          echo "CONFIG_MT76_CORE=m" >> wifi_ext.config
+          echo "CONFIG_MT76_USB=m" >> wifi_ext.config
+          echo "CONFIG_MT7601U=m" >> wifi_ext.config
+          echo "CONFIG_ATH_COMMON=m" >> wifi_ext.config
+          echo "CONFIG_ATH_CARDS=m" >> wifi_ext.config
+          echo "CONFIG_ATH9K_HW=m" >> wifi_ext.config
+          echo "CONFIG_ATH9K_COMMON=m" >> wifi_ext.config
+          echo "CONFIG_ATH9K_HTC=m" >> wifi_ext.config
+          echo "CONFIG_ATH10K=m" >> wifi_ext.config
+          echo "CONFIG_ATH10K_USB=m" >> wifi_ext.config
+          
+          # 2. Menggabungkan gki_defconfig bawaan Google dengan konfigurasi wifi baru kita secara aman
+          ARCH=arm64 scripts/kconfig/merge_config.sh -m arch/arm64/configs/gki_defconfig wifi_ext.config
+          
+          # 3. Memperbarui dependensi konfigurasi otomatis agar tidak memicu Exit Code 2
+          make ARCH=arm64 O=out olddefconfig
+          
+          # 4. Mulai proses memasak kernel + modul .ko
           make ARCH=arm64 O=out -j$(nproc --all) LLVM=1 LLVM_IAS=1
 
       - name: Collect and Package .ko Files
