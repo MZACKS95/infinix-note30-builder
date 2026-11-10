@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Maximize Server Build Space
-        uses: easimon/maximize-build-space@main
+        uses: dabao1955/kernel_build_action@main
         with:
           root-reserve-mb: 8192
           temp-reserve-mb: 4096
