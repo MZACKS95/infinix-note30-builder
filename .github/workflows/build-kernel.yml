@@ -36,39 +36,31 @@ jobs:
           cd $GITHUB_WORKSPACE/kernel
           export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
           
-          # 1. Membuat folder output secara fisik agar tidak memicu Exit Code 2
-          mkdir -p out
+          # 1. Tulis paksa konfigurasi driver wifi langsung ke dalam file gki_defconfig asli
+          CONFIG_FILE="arch/arm64/configs/gki_defconfig"
+          echo "" >> $CONFIG_FILE
+          echo "CONFIG_NET_CORE=y" >> $CONFIG_FILE
+          echo "CONFIG_WLAN=y" >> $CONFIG_FILE
+          echo "CONFIG_MT76_CORE=m" >> $CONFIG_FILE
+          echo "CONFIG_MT76_USB=m" >> $CONFIG_FILE
+          echo "CONFIG_MT7601U=m" >> $CONFIG_FILE
+          echo "CONFIG_ATH_COMMON=m" >> $CONFIG_FILE
+          echo "CONFIG_ATH_CARDS=m" >> $CONFIG_FILE
+          echo "CONFIG_ATH9K_HW=m" >> $CONFIG_FILE
+          echo "CONFIG_ATH9K_COMMON=m" >> $CONFIG_FILE
+          echo "CONFIG_ATH9K_HTC=m" >> $CONFIG_FILE
+          echo "CONFIG_ATH10K=m" >> $CONFIG_FILE
+          echo "CONFIG_ATH10K_USB=m" >> $CONFIG_FILE
           
-          # 2. Membuat file konfigurasi tambahan khusus untuk wifi luar (ekstensi .config)
-          echo "CONFIG_NET_CORE=y" > wifi_ext.config
-          echo "CONFIG_WLAN=y" >> wifi_ext.config
-          echo "CONFIG_MT76_CORE=m" >> wifi_ext.config
-          echo "CONFIG_MT76_USB=m" >> wifi_ext.config
-          echo "CONFIG_MT7601U=m" >> wifi_ext.config
-          echo "CONFIG_ATH_COMMON=m" >> wifi_ext.config
-          echo "CONFIG_ATH_CARDS=m" >> wifi_ext.config
-          echo "CONFIG_ATH9K_HW=m" >> wifi_ext.config
-          echo "CONFIG_ATH9K_COMMON=m" >> wifi_ext.config
-          echo "CONFIG_ATH9K_HTC=m" >> wifi_ext.config
-          echo "CONFIG_ATH10K=m" >> wifi_ext.config
-          echo "CONFIG_ATH10K_USB=m" >> wifi_ext.config
-          
-          # 3. Menggabungkan gki_defconfig dengan konfigurasi wifi baru kita secara aman
-          ARCH=arm64 scripts/kconfig/merge_config.sh -m arch/arm64/configs/gki_defconfig wifi_ext.config
-          
-          # 4. Membaca konfigurasi dasar ke dalam sistem
+          # 2. Buat konfigurasi dasar menggunakan defconfig yang sudah dimodifikasi
           make ARCH=arm64 gki_defconfig
           
-          # 5. Memperbarui dependensi otomatis
-          make ARCH=arm64 olddefconfig
-          
-          # 6. Mulai proses kompilasi Kernel + modul .ko langsung tanpa subfolder terpisah untuk kestabilan
+          # 3. Mulai proses kompilasi Kernel + modul .ko secara murni
           make ARCH=arm64 -j$(nproc --all) LLVM=1 LLVM_IAS=1
 
       - name: Collect and Package .ko Files
         run: |
           mkdir -p $GITHUB_WORKSPACE/output_modules
-          # Menyisir seluruh folder kernel untuk mencari berkas .ko hasil compile
           find $GITHUB_WORKSPACE/kernel/ -name "*.ko" -exec cp {} $GITHUB_WORKSPACE/output_modules/ \;
 
       - name: Upload Output Artifacts
@@ -78,5 +70,5 @@ jobs:
           path: |
             kernel/arch/arm64/boot/Image
             kernel/arch/arm64/boot/Image.lz4
-            kernel/arch/arm64/boot/Image.gz
+            kernel/arch/arch/arm64/boot/Image.gz
             output_modules/
