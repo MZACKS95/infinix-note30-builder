@@ -308,6 +308,18 @@ jobs:
             -name 'wlan_drv_gen4m_6789.ko' \
             -exec cp {} "$GITHUB_WORKSPACE/artifacts/" \;
 
+      - name: Strip Debug Symbols
+        run: |
+          set -e
+          STRIP="$GITHUB_WORKSPACE/clang-aosp/bin/llvm-strip"
+
+          for module in "$GITHUB_WORKSPACE"/artifacts/*.ko; do
+            "$STRIP" --strip-debug "$module"
+          done
+
+          ls -lh "$GITHUB_WORKSPACE"/artifacts/*.ko
+
+
       - name: Collect Build Information
         if: always()
         run: |
