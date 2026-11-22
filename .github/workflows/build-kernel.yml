@@ -252,6 +252,7 @@ jobs:
           echo "===== BUILD PARALLEL JOBS: $JOBS ====="
 
           make -j"$JOBS" O=out \
+            KBUILD_BUILTIN= \
             modules \
             KBUILD_MODPOST_WARN=1
           
