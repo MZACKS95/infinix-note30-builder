@@ -1,0 +1,303 @@
+name: Build MT7601u-patched-final-v2
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-mt7601u:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout Workflow
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison build-essential ccache curl flex git \
+            kmod libelf-dev libssl-dev lz4 pahole python3 rsync patchutils
+
+      - name: Setup 8GB Swap
+        run: |
+          if [ -z "$(swapon --show --noheadings)" ]; then
+            sudo dd if=/dev/zero of=/mnt/swapfile bs=1M count=8192 status=progress
+            sudo chmod 600 /mnt/swapfile
+            sudo mkswap /mnt/swapfile
+            sudo swapon /mnt/swapfile
+          fi
+          free -h
+          swapon --show
+
+      - name: Cache Kernel Source
+        uses: actions/cache@v4
+        with:
+          path: android/kernel/common/7c6bbcca33e1
+          key: kernel-common-7c6bbcca33e1-v1
+
+      - name: Clone Google Common Kernel
+        run: |
+          set -e
+          mkdir -p "$GITHUB_WORKSPACE/android/kernel/common"
+          KERNEL_DIR="$GITHUB_WORKSPACE/android/kernel/common/7c6bbcca33e1"
+          rm -rf "$KERNEL_DIR"
+          git clone https://android.googlesource.com/kernel/common \
+            "$KERNEL_DIR"
+          cd "$KERNEL_DIR"
+          git fetch origin \
+            refs/heads/android12-5.10:refs/remotes/origin/android12-5.10
+          git checkout --detach 7c6bbcca33e1
+          echo "Kernel commit:"
+          git rev-parse --short HEAD
+
+      - name: Import MediaTek Headers + Gen4M from rock-u-oss ONLY
+        run: |
+          set -e
+          KERNEL_DIR="$GITHUB_WORKSPACE/android/kernel/common/7c6bbcca33e1"
+          GEN4M_DIR="$GITHUB_WORKSPACE/gen4m"
+          TOP_DIR="$(dirname "$KERNEL_DIR")"
+          VENDOR_DIR="$TOP_DIR/vendor/mediatek/kernel_modules"
+
+          rm -rf /tmp/rock "$GEN4M_DIR"
+          git clone --depth 1 -b rock-u-oss \
+            https://github.com/MiCode/MTK_kernel_modules.git \
+            /tmp/rock
+
+          echo "===== ROCK TREE ====="
+          ls -R /tmp/rock | head -n 100
+
+          # 1. Plat header - dari rock, bukan emerald lagi
+          mkdir -p "$KERNEL_DIR/drivers/misc"
+          rm -rf "$KERNEL_DIR/drivers/misc/mediatek"
+          if [ -d /tmp/rock/drivers/misc/mediatek ]; then
+            cp -a /tmp/rock/drivers/misc/mediatek \
+              "$KERNEL_DIR/drivers/misc/"
+            echo "plat: from /tmp/rock/drivers/misc/mediatek"
+          elif [ -d /tmp/rock/kernel_modules/drivers/misc/mediatek ]; then
+            cp -a /tmp/rock/kernel_modules/drivers/misc/mediatek \
+              "$KERNEL_DIR/drivers/misc/"
+            echo "plat: from /tmp/rock/kernel_modules/drivers/misc/mediatek"
+          else
+            echo "ERROR: drivers/misc/mediatek not found in rock-u-oss"
+            find /tmp/rock -maxdepth 4 -type d -name mediatek | head -n 20
+            exit 1
+          fi
+
+          # 2. Connectivity + Gen4M - juga dari rock yang sama
+          cp -a /tmp/rock/connectivity/wlan/core/gen4m \
+            "$GEN4M_DIR"
+
+          mkdir -p "$VENDOR_DIR"
+          cp -a /tmp/rock/connectivity \
+            "$VENDOR_DIR/"
+
+      - name: Apply NetHunter Patch - mac80211 ONLY
+        run: |
+          set -e
+          KERNEL_DIR="$GITHUB_WORKSPACE/android/kernel/common/7c6bbcca33e1"
+          PATCH_FILE="$GITHUB_WORKSPACE/.github/workflows/add-wifi-injection-5.10.patch"
+          cd "$KERNEL_DIR"
+          git reset --hard 7c6bbcca33e1
+
+          if [ ! -f "$PATCH_FILE" ]; then
+            echo "Patch file not found: $PATCH_FILE"
+            exit 1
+          fi
+
+          # Filter: ambil hanya hunk net/mac80211/*, buang cfg80211 + net/wireless
+          filterdiff --include='*/net/mac80211/*' --include='*/include/net/mac80211.h' \
+            "$PATCH_FILE" > /tmp/mac80211-only.patch || true
+
+          echo "===== MAC80211-ONLY PATCH STAT ====="
+          cat /tmp/mac80211-only.patch | grep -E "^\+\+\+|^---" | head -n 50
+
+          if [ ! -s /tmp/mac80211-only.patch ]; then
+            echo "ERROR: mac80211 hunk kosong, cek nama patch file"
+            grep -E "^\+\+\+|^diff --git" "$PATCH_FILE" | head -n 100
+            exit 1
+          fi
+
+          patch -p1 --forward < /tmp/mac80211-only.patch
+          echo "cfg80211 dibiarkan STOCK, tidak di-patch"
+
+      - name: Cache AOSP Clang
+        id: clang-cache
+        uses: actions/cache@v4
+        with:
+          path: clang-aosp
+          key: aosp-clang-r416183b-android12-v2
+
+      - name: Download AOSP Clang
+        if: steps.clang-cache.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          echo "===== DOWNLOAD AOSP CLANG ====="
+          mkdir -p clang-aosp
+          curl -L --fail --retry 3 \
+            -o clang.tar.gz \
+            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android12-release/clang-r416183b.tar.gz"
+          tar -xzf clang.tar.gz -C clang-aosp
+          rm clang.tar.gz
+
+      - name: Setup Clang
+        run: |
+          set -e
+          CLANG_DIR="$GITHUB_WORKSPACE/clang-aosp"
+          echo "===== CLANG DIRECTORY ====="
+          ls -lah "$CLANG_DIR"
+          ls -lah "$CLANG_DIR/bin"
+          echo "$CLANG_DIR/bin" >> "$GITHUB_PATH"
+          chmod +x "$CLANG_DIR/bin/"*
+          test -x "$CLANG_DIR/bin/clang"
+          test -x "$CLANG_DIR/bin/ld.lld"
+          "$CLANG_DIR/bin/clang" --version
+          "$CLANG_DIR/bin/ld.lld" --version
+
+      - name: Setup ccache
+        run: |
+          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
+          ccache --max-size=5G
+          ccache --set-config=compression=true
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-mt6789-5.10.209-${{ github.sha }}
+          restore-keys: |
+            ccache-mt6789-5.10.209-
+
+      - name: Prepare Kernel Configuration
+        run: |
+          set -e
+          KERNEL_DIR="$GITHUB_WORKSPACE/android/kernel/common/7c6bbcca33e1"
+          cd "$KERNEL_DIR"
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export LLVM=1
+          export LLVM_IAS=1
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export PATH="$GITHUB_WORKSPACE/clang-aosp/bin:$PATH"
+          make O=out gki_defconfig
+          scripts/config --file out/.config \
+            -e MODULES \
+            -e MODVERSIONS \
+            -e USB \
+            -e WIRELESS \
+            -e WLAN \
+            -e WLAN_VENDOR_MEDIATEK \
+            -m CFG80211 \
+            -m MAC80211 \
+            -m MT7601U
+          scripts/config --file out/.config \
+            --set-str LOCALVERSION "-android12-9-00016-g7c6bbcca33e1-ab12029497"
+          make O=out olddefconfig
+          make O=out modules_prepare
+
+      - name: Restore Module.symvers
+        run: |
+          set -e
+          KERNEL_DIR="$GITHUB_WORKSPACE/android/kernel/common/7c6bbcca33e1"
+          test -s "$GITHUB_WORKSPACE/config/Module.symvers"
+          mkdir -p "$KERNEL_DIR/out"
+          cp "$GITHUB_WORKSPACE/config/Module.symvers" \
+            "$KERNEL_DIR/out/Module.symvers"
+          echo "===== MODULE SYMVERS RESTORED ====="
+          ls -lh "$KERNEL_DIR/out/Module.symvers"
+
+      - name: Build Kernel and WiFi Modules
+        run: |
+          set -e
+          KERNEL_DIR="$GITHUB_WORKSPACE/android/kernel/common/7c6bbcca33e1"
+          cd "$KERNEL_DIR"
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export LLVM=1
+          export LLVM_IAS=1
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export PATH="$GITHUB_WORKSPACE/clang-aosp/bin:$PATH"
+          export KBUILD_BUILD_USER=builder
+          export KBUILD_BUILD_HOST=github-actions
+          JOBS=2
+          echo "===== BUILD PARALLEL JOBS: $JOBS ====="
+          make -j"$JOBS" O=out \
+            KBUILD_BUILTIN= \
+            modules \
+            KBUILD_MODPOST_WARN=1
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          find out -type f -name 'cfg80211.ko' \
+            -exec cp {} "$GITHUB_WORKSPACE/artifacts/" \;
+          find out -type f -name 'mac80211.ko' \
+            -exec cp {} "$GITHUB_WORKSPACE/artifacts/" \;
+          find out -type f -name 'mt7601u.ko' \
+            -exec cp {} "$GITHUB_WORKSPACE/artifacts/" \;
+
+      - name: Build wlan_drv_gen4m_6789
+        run: |
+          set -e
+          KERNEL_DIR="$GITHUB_WORKSPACE/android/kernel/common/7c6bbcca33e1"
+          GEN4M_DIR="$GITHUB_WORKSPACE/gen4m"
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export LLVM=1
+          export LLVM_IAS=1
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export PATH="$GITHUB_WORKSPACE/clang-aosp/bin:$PATH"
+          cd "$GEN4M_DIR"
+          make -C "$KERNEL_DIR" \
+            O="$KERNEL_DIR/out" \
+            M="$GEN4M_DIR" \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            KBUILD_MODPOST_WARN=1 \
+            KBUILD_MODPOST_FAIL_ON_WARNINGS=n \
+            WLAN_CHIP_ID=6789 \
+            CONFIG_MTK_PLATFORM=mt6789 \
+            CONFIG_MTK_SUPPORT_OS=linux \
+            MTK_COMBO_CHIP=SOC2_1X1 \
+            CONFIG_MTK_COMBO_WIFI_HIF=axi \
+            MODULE_NAME=wlan_drv_gen4m_6789 \
+            MTK_ANDROID_WMT=y \
+            MTK_ANDROID_EMI=y \
+            WIFI_IP_SET=1 \
+            MTK_WLAN_SERVICE=yes \
+            modules
+          find "$GEN4M_DIR" -type f \
+            -name 'wlan_drv_gen4m_6789.ko' \
+            -exec cp {} "$GITHUB_WORKSPACE/artifacts/" \;
+
+      - name: Strip Debug Symbols
+        run: |
+          set -e
+          STRIP="$GITHUB_WORKSPACE/clang-aosp/bin/llvm-strip"
+          for module in "$GITHUB_WORKSPACE"/artifacts/*.ko; do
+            "$STRIP" --strip-debug "$module"
+          done
+          ls -lh "$GITHUB_WORKSPACE"/artifacts/*.ko
+
+      - name: Collect Build Information
+        if: always()
+        run: |
+          KERNEL_DIR="$GITHUB_WORKSPACE/android/kernel/common/7c6bbcca33e1"
+          echo "===== Kernel Modules ====="
+          find "$KERNEL_DIR/out" -type f -name '*.ko' 2>/dev/null || true
+          echo "===== Artifacts ====="
+          ls -lh "$GITHUB_WORKSPACE/artifacts" 2>/dev/null || true
+          echo "===== ccache ====="
+          ccache -s || true
+
+      - name: Upload WiFi Modules
+        uses: actions/upload-artifact@v4
+        with:
+          name: MT7601U-MT6789-WiFi-Modules
+          path: artifacts/*.ko
+          if-no-files-found: error
