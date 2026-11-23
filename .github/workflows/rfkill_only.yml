@@ -23,20 +23,24 @@ jobs:
             bc bison build-essential ccache curl flex git \
             kmod libelf-dev libssl-dev lz4 pahole python3 rsync
 
+      
       - name: Cache Kernel Source
+        id: kernel-cache
         uses: actions/cache@v4
         with:
           path: android/kernel/common/7c6bbcca33e1
           key: kernel-common-7c6bbcca33e1-v1
 
       - name: Clone Google Common Kernel
+        if: steps.kernel-cache.outputs.cache-hit != 'true'
         run: |
           set -e
           mkdir -p "$GITHUB_WORKSPACE/android/kernel/common"
           KERNEL_DIR="$GITHUB_WORKSPACE/android/kernel/common/7c6bbcca33e1"
-          rm -rf "$KERNEL_DIR"
+
           git clone https://android.googlesource.com/kernel/common \
             "$KERNEL_DIR"
+
           cd "$KERNEL_DIR"
           git fetch origin \
             refs/heads/android12-5.10:refs/remotes/origin/android12-5.10
